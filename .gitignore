@@ -30,3 +30,14 @@
 
 # Debug files
 *.dSYM/
+examples/ble_peripheral/ble_app_K1/pca10028/s110/arm4/_build/*.crf
+examples/ble_peripheral/ble_app_K1/pca10028/s110/arm4/_build/*.d
+examples/ble_peripheral/ble_app_K1/pca10028/s110/arm4/JLinkLog.txt
+examples/ble_peripheral/ble_app_K1/pca10028/s110/arm4/_build/arm_startup_nrf51.lst
+examples/ble_peripheral/ble_app_K1/pca10028/s110/arm4/_build/ExtDll.iex
+examples/ble_peripheral/ble_app_K1/pca10028/s110/arm4/_build/nrf51422_xxac_s110.axf
+examples/ble_peripheral/ble_app_K1/pca10028/s110/arm4/_build/nrf51422_xxac_s110.htm
+examples/ble_peripheral/ble_app_K1/pca10028/s110/arm4/_build/nrf51422_xxac_s110.lnp
+examples/ble_peripheral/ble_app_K1/pca10028/s110/arm4/_build/nrf51422_xxac_s110.map
+examples/ble_peripheral/ble_app_K1/pca10028/s110/arm4/_build/nrf51422_xxac_s110.plg
+examples/ble_peripheral/ble_app_K1/pca10028/s110/arm4/_build/nrf51422_xxac_s110.sct
