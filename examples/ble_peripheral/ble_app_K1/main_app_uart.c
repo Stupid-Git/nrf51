@@ -123,7 +123,7 @@ void assert_nrf_callback(uint16_t line_num, const uint8_t * p_file_name)
         ->  sd_ble_gap_ppcp_set
 */
 
-#define td_gap_DEVICE_NAME                     "Nodick_UART"                               /**< Name of device. Will be included in the advertising data. */
+#define td_gap_DEVICE_NAME                     "Newdick_UART"                               /**< Name of device. Will be included in the advertising data. */
 #define td_gap_MIN_CONN_INTERVAL               MSEC_TO_UNITS(20, UNIT_1_25_MS)             /**< Minimum acceptable connection interval (20 ms), Connection interval uses 1.25 ms units. */
 #define td_gap_MAX_CONN_INTERVAL               MSEC_TO_UNITS(75, UNIT_1_25_MS)             /**< Maximum acceptable connection interval (75 ms), Connection interval uses 1.25 ms units. */
 #define td_gap_SLAVE_LATENCY                   0                                           /**< Slave latency. */
