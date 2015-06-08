@@ -38,6 +38,18 @@
 #include "app_util_platform.h"
 #include "bsp.h"
 
+//*****************************************************************************
+//*****************************************************************************
+#define USE_TD1 1
+
+#if USE_TD1
+#include "ble_td1s.h"
+static ble_td1s_t                      m_td1s;                                      /**< Structure to identify the TD1 Service. */
+#endif
+//*****************************************************************************
+//*****************************************************************************
+
+
 #define IS_SRVC_CHANGED_CHARACT_PRESENT 0                                           /**< Include the service_changed characteristic. If not enabled, the server's database cannot be changed for the lifetime of the device. */
 
 #define WAKEUP_BUTTON_ID                0                                           /**< Button used to wake up the application. */
@@ -123,7 +135,7 @@ void assert_nrf_callback(uint16_t line_num, const uint8_t * p_file_name)
         ->  sd_ble_gap_ppcp_set
 */
 
-#define td_gap_DEVICE_NAME                     "Newdick_UART"                               /**< Name of device. Will be included in the advertising data. */
+#define td_gap_DEVICE_NAME                     "Newdick0_UART"                               /**< Name of device. Will be included in the advertising data. */
 #define td_gap_MIN_CONN_INTERVAL               MSEC_TO_UNITS(20, UNIT_1_25_MS)             /**< Minimum acceptable connection interval (20 ms), Connection interval uses 1.25 ms units. */
 #define td_gap_MAX_CONN_INTERVAL               MSEC_TO_UNITS(75, UNIT_1_25_MS)             /**< Maximum acceptable connection interval (75 ms), Connection interval uses 1.25 ms units. */
 #define td_gap_SLAVE_LATENCY                   0                                           /**< Slave latency. */
@@ -176,13 +188,21 @@ static void advertising_init(void)
     ble_advdata_t scanrsp;
     uint8_t       flags = BLE_GAP_ADV_FLAGS_LE_ONLY_LIMITED_DISC_MODE;
     
+    
     ble_uuid_t adv_uuids[] = {{BLE_UUID_NUS_SERVICE, m_nus.uuid_type}};
+#if USE_TD1 
+    //TODO_TD1 ble_uuid_t adv_uuids[] = {{BLE_UUID_TD1S_SERVICE, m_td1s.uuid_type}};
+#endif
 
+    // Build and set advertising data
     memset(&advdata, 0, sizeof(advdata));
+    
     advdata.name_type               = BLE_ADVDATA_FULL_NAME;
     advdata.include_appearance      = false;
     advdata.flags                   = flags;
-
+  //advdata.uuids_complete.uuid_cnt = sizeof(adv_uuids) / sizeof(adv_uuids[0]);
+  //advdata.uuids_complete.p_uuids  = adv_uuids;    
+    
     memset(&scanrsp, 0, sizeof(scanrsp));
     scanrsp.uuids_complete.uuid_cnt = sizeof(adv_uuids) / sizeof(adv_uuids[0]);
     scanrsp.uuids_complete.p_uuids  = adv_uuids;
@@ -212,6 +232,17 @@ static void nus_data_handler(ble_nus_t * p_nus, uint8_t * p_data, uint16_t lengt
 }
 /**@snippet [Handling the data received over BLE] */
 
+#if USE_TD1
+static void td1s_data_handler(ble_td1s_t * p_td1s, uint8_t * p_data, uint16_t length)
+{
+    for (uint32_t i = 0; i < length; i++)
+    {
+        while(app_uart_put(p_data[i]) != NRF_SUCCESS);
+    }
+    while(app_uart_put('\n') != NRF_SUCCESS);
+}
+#endif
+
 
 /**@brief Function for initializing services that will be used by the application.
  */
@@ -226,6 +257,17 @@ static void services_init(void)
     
     err_code = ble_nus_init(&m_nus, &nus_init);
     APP_ERROR_CHECK(err_code);
+
+#if USE_TD1
+    ble_td1s_init_t   td1s_init;    
+    memset(&td1s_init, 0, sizeof(td1s_init));
+
+    td1s_init.data_handler = td1s_data_handler;
+    
+    err_code = ble_td1s_init(&m_td1s, &td1s_init);
+    APP_ERROR_CHECK(err_code);
+#endif
+
 }
 
 
@@ -288,7 +330,7 @@ static void conn_params_init(void)
     cp_init.first_conn_params_update_delay = FIRST_CONN_PARAMS_UPDATE_DELAY;
     cp_init.next_conn_params_update_delay  = NEXT_CONN_PARAMS_UPDATE_DELAY;
     cp_init.max_conn_params_update_count   = MAX_CONN_PARAMS_UPDATE_COUNT;
-    cp_init.start_on_notify_cccd_handle    = BLE_GATT_HANDLE_INVALID;
+    cp_init.start_on_notify_cccd_handle    = BLE_GATT_HANDLE_INVALID;  //karel -> force negotiation see ble_conn_params.c (232)
     cp_init.disconnect_on_fail             = false;
     cp_init.evt_handler                    = on_conn_params_evt;
     cp_init.error_handler                  = conn_params_error_handler;
@@ -412,7 +454,16 @@ static void on_ble_evt(ble_evt_t * p_ble_evt)
 static void ble_evt_dispatch(ble_evt_t * p_ble_evt)
 {
     ble_conn_params_on_ble_evt(p_ble_evt);
-    ble_nus_on_ble_evt(&m_nus, p_ble_evt);
+    
+    ble_nus_on_ble_evt(&m_nus, p_ble_evt); // components/ble/ble_services/ble_nus/ble_nus.c(201)
+        // case BLE_GAP_EVT_CONNECTED:    on_connect(p_nus, p_ble_evt);
+        // case BLE_GAP_EVT_DISCONNECTED: on_disconnect(p_nus, p_ble_evt);
+        // case BLE_GATTS_EVT_WRITE:      on_write(p_nus, p_ble_evt);
+
+#if USE_TD1
+    ble_td1s_on_ble_evt(&m_td1s, p_ble_evt);
+#endif
+    
     on_ble_evt(p_ble_evt);
 }
 
@@ -458,6 +509,29 @@ static void power_manage(void)
  *          @ref NUS_MAX_DATA_LENGTH.
  */
 /**@snippet [Handling the data received over UART] */
+
+#if USE_TD1
+void uart_event_handle_bogus_td1s(uint8_t *pbyte)
+{
+    static uint8_t data_array[BLE_NUS_MAX_DATA_LEN];
+    static uint8_t index = 0;
+    uint32_t err_code;
+
+    data_array[index] = *pbyte;
+    index++;
+    if ((data_array[index - 1] == '\n') || (index >= (BLE_TD1S_MAX_DATA_LEN)))
+    {
+        err_code = ble_td1s_string_send(&m_td1s, data_array, index);
+        if (err_code != NRF_ERROR_INVALID_STATE)
+        {
+            APP_ERROR_CHECK(err_code);
+        }        
+        index = 0;
+    }
+    
+}
+#endif
+
 void uart_event_handle(app_uart_evt_t * p_event)
 {
     static uint8_t data_array[BLE_NUS_MAX_DATA_LEN];
@@ -466,8 +540,12 @@ void uart_event_handle(app_uart_evt_t * p_event)
 
     switch (p_event->evt_type)
     {
-        case APP_UART_DATA_READY:
+        case APP_UART_DATA_READY:            
             UNUSED_VARIABLE(app_uart_get(&data_array[index]));
+        
+#if USE_TD1
+            uart_event_handle_bogus_td1s(&data_array[index]);
+#endif
             index++;
 
             if ((data_array[index - 1] == '\n') || (index >= (BLE_NUS_MAX_DATA_LEN)))
@@ -517,7 +595,7 @@ static void uart_init(void)
     APP_UART_FIFO_INIT( &comm_params,
                         UART_RX_BUF_SIZE,
                         UART_TX_BUF_SIZE,
-                       uart_event_handle,
+                        uart_event_handle, //OK this is the callback for UART interrupts
                         APP_IRQ_PRIORITY_LOW,
                         err_code);
     APP_ERROR_CHECK(err_code);
@@ -533,7 +611,7 @@ int main(void)
     uint32_t err_code;
     
     // Initialize.
-    APP_TIMER_INIT(APP_TIMER_PRESCALER, APP_TIMER_MAX_TIMERS, APP_TIMER_OP_QUEUE_SIZE, false);
+    APP_TIMER_INIT(APP_TIMER_PRESCALER, APP_TIMER_MAX_TIMERS, APP_TIMER_OP_QUEUE_SIZE, NULL); //false);
     APP_GPIOTE_INIT(APP_GPIOTE_MAX_USERS);
     ble_stack_init();
     uart_init();
@@ -543,20 +621,20 @@ int main(void)
     APP_ERROR_CHECK(err_code);
     err_code = bsp_buttons_enable(1 << WAKEUP_BUTTON_ID);
     APP_ERROR_CHECK(err_code);
-    gap_params_init();
-    services_init();
-    advertising_init();
-    conn_params_init();
-    sec_params_init();
+    gap_params_init(); //OK
+    services_init(); //OK
+    advertising_init(); //OK -> either OR ish
+    conn_params_init(); //OK
+    sec_params_init(); //OK
     
     printf("%s",start_string);
 
-    advertising_start();
+    advertising_start(); //OK
     
     // Enter main loop.
     for (;;)
     {
-        power_manage();
+        power_manage(); //OK
     }
 }
 
