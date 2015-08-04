@@ -31,16 +31,26 @@
 #include "ble_conn_params.h"
 #include "softdevice_handler.h"
 #include "app_timer.h"
+
+#define USE_DM 1
+
+#if USE_DM
+#include "ble_advertising.h"
+#include "device_manager.h"
+#include "pstorage.h"
+#include "app_trace.h"
+#endif
+
 #include "app_gpiote.h"
 #include "app_button.h"
-#include "ble_nus.h"
+//#include "ble_nus.h"
 #include "app_uart.h"
 #include "app_util_platform.h"
 #include "bsp.h"
 
 //*****************************************************************************
 //*****************************************************************************
-#define USE_TD1 1
+#define USE_TD1 0
 
 #if USE_TD1
 #include "ble_td1s.h"
@@ -49,10 +59,35 @@ static ble_td1s_t                      m_td1s;                                  
 //*****************************************************************************
 //*****************************************************************************
 
+//*****************************************************************************
+//*****************************************************************************
+#define USE_TD2 1
+
+#if USE_TD2
+#include "ble_td2s.h"
+static ble_td2s_t                      m_td2s;                                      /**< Structure to identify the TD2 Service. */
+#endif
+//*****************************************************************************
+//*****************************************************************************
+
+//*****************************************************************************
+//*****************************************************************************
+#define USE_NUS 0
+
+#if USE_NUS
+#include "ble_nus.h"
+#endif
+//*****************************************************************************
+//*****************************************************************************
+
 
 #define IS_SRVC_CHANGED_CHARACT_PRESENT 0                                           /**< Include the service_changed characteristic. If not enabled, the server's database cannot be changed for the lifetime of the device. */
 
 #define WAKEUP_BUTTON_ID                0                                           /**< Button used to wake up the application. */
+#if USE_DM
+#define BOND_DELETE_ALL_BUTTON_ID       1                                           /**< Button used for deleting all bonded centrals during startup. */
+#endif
+
 
 
 #define APP_ADV_INTERVAL                64                                          /**< The advertising interval (in units of 0.625 ms. This value corresponds to 40 ms). */
@@ -77,6 +112,10 @@ static ble_td1s_t                      m_td1s;                                  
 #define SEC_PARAM_MIN_KEY_SIZE          7                                           /**< Minimum encryption key size. */
 #define SEC_PARAM_MAX_KEY_SIZE          16                                          /**< Maximum encryption key size. */
 
+#if USE_DM
+static dm_application_instance_t         m_app_handle;                              /**< Application identifier allocated by device manager */
+#endif
+
 #define START_STRING                    "Start...\n"                                /**< The string that will be sent over the UART when the application starts. */
 
 #define DEAD_BEEF                       0xDEADBEEF                                  /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
@@ -85,7 +124,9 @@ static ble_td1s_t                      m_td1s;                                  
 #define UART_RX_BUF_SIZE                256                                         /**< UART RX buffer size. */
 
 static ble_gap_sec_params_t             m_sec_params;                               /**< Security requirements for this application. */
+#if USE_NUS
 static ble_nus_t                        m_nus;                                      /**< Structure to identify the Nordic UART Service. */
+#endif
 static uint16_t                         m_conn_handle = BLE_CONN_HANDLE_INVALID;    /**< Handle of the current connection. */
 
 
@@ -175,6 +216,68 @@ static void gap_params_init(void)
     APP_ERROR_CHECK(err_code);
 }
 
+#if USE_DM    
+
+/**@brief Function for handling the Device Manager events.
+ *
+ * @param[in] p_evt  Data associated to the device manager event.
+ */
+static uint32_t device_manager_evt_handler(dm_handle_t const * p_handle,
+                                           dm_event_t const  * p_event,
+                                           ret_code_t        event_result)
+{
+    APP_ERROR_CHECK(event_result);
+
+#ifdef BLE_DFU_APP_SUPPORT
+    if (p_event->event_id == DM_EVT_LINK_SECURED)
+    {
+        app_context_load(p_handle);
+    }
+#endif // BLE_DFU_APP_SUPPORT
+
+    return NRF_SUCCESS;
+}
+
+
+/**@brief Function for the Device Manager initialization.
+ */
+static void device_manager_init(void)
+{
+    uint32_t               err_code;
+    dm_init_param_t        init_data;
+    dm_application_param_t register_param;
+
+    // Initialize persistent storage module.
+    err_code = pstorage_init();
+    APP_ERROR_CHECK(err_code);
+
+    // Clear all bonded centrals if the Bonds Delete button is pushed.
+    err_code = bsp_button_is_pressed(BOND_DELETE_ALL_BUTTON_ID,&(init_data.clear_persistent_data));
+    APP_ERROR_CHECK(err_code);
+
+    err_code = dm_init(&init_data);
+    APP_ERROR_CHECK(err_code);
+
+    memset(&register_param.sec_param, 0, sizeof(ble_gap_sec_params_t));
+
+    register_param.sec_param.bond         = SEC_PARAM_BOND;
+    register_param.sec_param.mitm         = SEC_PARAM_MITM;
+    register_param.sec_param.io_caps      = SEC_PARAM_IO_CAPABILITIES;
+    register_param.sec_param.oob          = SEC_PARAM_OOB;
+    register_param.sec_param.min_key_size = SEC_PARAM_MIN_KEY_SIZE;
+    register_param.sec_param.max_key_size = SEC_PARAM_MAX_KEY_SIZE;
+    register_param.evt_handler            = device_manager_evt_handler;
+    register_param.service_type           = DM_PROTOCOL_CNTXT_GATT_SRVR_ID;
+
+    err_code = dm_register(&m_app_handle, &register_param);
+    APP_ERROR_CHECK(err_code);
+}
+#endif
+
+
+#if USE_DM
+static void on_adv_evt(ble_adv_evt_t ble_adv_evt);
+#endif
 
 /**@brief   Function for the Advertising functionality initialization.
  *
@@ -186,12 +289,24 @@ static void advertising_init(void)
     uint32_t      err_code;
     ble_advdata_t advdata;
     ble_advdata_t scanrsp;
+#if USE_DM
+    uint8_t       flags = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
+#else
     uint8_t       flags = BLE_GAP_ADV_FLAGS_LE_ONLY_LIMITED_DISC_MODE;
+#endif
     
     
+#if USE_NUS
     ble_uuid_t adv_uuids[] = {{BLE_UUID_NUS_SERVICE, m_nus.uuid_type}};
+#endif
+
 #if USE_TD1 
     //TODO_TD1 ble_uuid_t adv_uuids[] = {{BLE_UUID_TD1S_SERVICE, m_td1s.uuid_type}};
+#endif
+
+#if USE_TD2 
+    //TODO_TD2
+    ble_uuid_t adv_uuids[] = {{BLE_UUID_TD2S_SERVICE, m_td2s.uuid_type}};
 #endif
 
     // Build and set advertising data
@@ -209,6 +324,16 @@ static void advertising_init(void)
     
     err_code = ble_advdata_set(&advdata, &scanrsp);
     APP_ERROR_CHECK(err_code);
+    
+#if USE_DM
+    ble_adv_modes_config_t options = {0};
+    options.ble_adv_fast_enabled  = BLE_ADV_FAST_ENABLED;
+    options.ble_adv_fast_interval = APP_ADV_INTERVAL;
+    options.ble_adv_fast_timeout  = APP_ADV_TIMEOUT_IN_SECONDS;
+
+    err_code = ble_advertising_init(&advdata, &options, on_adv_evt, NULL);
+    APP_ERROR_CHECK(err_code);
+#endif
 }
 
 
@@ -222,6 +347,7 @@ static void advertising_init(void)
  * @param[in] length   Length of the data.
  */
 /**@snippet [Handling the data received over BLE] */
+#if USE_NUS
 static void nus_data_handler(ble_nus_t * p_nus, uint8_t * p_data, uint16_t length)
 {
     for (uint32_t i = 0; i < length; i++)
@@ -230,11 +356,89 @@ static void nus_data_handler(ble_nus_t * p_nus, uint8_t * p_data, uint16_t lengt
     }
     while(app_uart_put('\n') != NRF_SUCCESS);
 }
+#endif
 /**@snippet [Handling the data received over BLE] */
 
 #if USE_TD1
 static void td1s_data_handler(ble_td1s_t * p_td1s, uint8_t * p_data, uint16_t length)
 {
+    while(app_uart_put('[') != NRF_SUCCESS);
+    while(app_uart_put('T') != NRF_SUCCESS);
+    while(app_uart_put('D') != NRF_SUCCESS);
+    while(app_uart_put('1') != NRF_SUCCESS);
+    while(app_uart_put(']') != NRF_SUCCESS);
+    while(app_uart_put(' ') != NRF_SUCCESS);
+    for (uint32_t i = 0; i < length; i++)
+    {
+        while(app_uart_put(p_data[i]) != NRF_SUCCESS);
+    }
+    while(app_uart_put('\n') != NRF_SUCCESS);
+}
+#endif
+
+#if USE_TD2
+
+int32_t blk_dn_start( uint8_t *pkt );
+int32_t blk_dn_add( uint8_t *pkt, uint16_t len );
+int32_t blk_dn_chk();
+
+static void td2s_data_handler(ble_td2s_t * p_td2s, uint8_t * p_data, uint16_t length)
+{
+    while(app_uart_put('[') != NRF_SUCCESS);
+    while(app_uart_put('T') != NRF_SUCCESS);
+    while(app_uart_put('X') != NRF_SUCCESS);
+    while(app_uart_put(' ') != NRF_SUCCESS);
+    while(app_uart_put(']') != NRF_SUCCESS);
+    while(app_uart_put(' ') != NRF_SUCCESS);
+    /*
+    for (uint32_t i = 0; i < length; i++)
+    {
+        while(app_uart_put(p_data[i]) != NRF_SUCCESS);
+    }
+    */
+    
+    blk_dn_add(p_data, length);
+
+    if( blk_dn_chk() == 0 )
+        while(app_uart_put('0') != NRF_SUCCESS);
+    else
+        while(app_uart_put('X') != NRF_SUCCESS);        
+    
+    while(app_uart_put('\n') != NRF_SUCCESS);
+}
+
+static void td2s_cmd_handler(ble_td2s_t * p_td2s, uint8_t * p_data, uint16_t length)
+{
+    while(app_uart_put('[') != NRF_SUCCESS);
+    while(app_uart_put('C') != NRF_SUCCESS);
+    while(app_uart_put('M') != NRF_SUCCESS);
+    while(app_uart_put('D') != NRF_SUCCESS);
+    while(app_uart_put(']') != NRF_SUCCESS);
+    while(app_uart_put(' ') != NRF_SUCCESS);
+    /*
+    for (uint32_t i = 0; i < length; i++)
+    {
+        while(app_uart_put(p_data[i]) != NRF_SUCCESS);
+    }
+    */
+    
+    if( (p_data[0] == 1) && (p_data[0] == 1) )
+    {
+        blk_dn_start( p_data );
+   
+        while(app_uart_put('S') != NRF_SUCCESS);
+    }
+    
+    while(app_uart_put('\n') != NRF_SUCCESS);
+}
+static void td2s_sts_handler(ble_td2s_t * p_td2s, uint8_t * p_data, uint16_t length)
+{
+    while(app_uart_put('[') != NRF_SUCCESS);
+    while(app_uart_put('S') != NRF_SUCCESS);
+    while(app_uart_put('T') != NRF_SUCCESS);
+    while(app_uart_put('S') != NRF_SUCCESS);
+    while(app_uart_put(']') != NRF_SUCCESS);
+    while(app_uart_put(' ') != NRF_SUCCESS);
     for (uint32_t i = 0; i < length; i++)
     {
         while(app_uart_put(p_data[i]) != NRF_SUCCESS);
@@ -249,6 +453,8 @@ static void td1s_data_handler(ble_td1s_t * p_td1s, uint8_t * p_data, uint16_t le
 static void services_init(void)
 {
     uint32_t         err_code;
+
+#if USE_NUS
     ble_nus_init_t   nus_init;
     
     memset(&nus_init, 0, sizeof(nus_init));
@@ -257,7 +463,9 @@ static void services_init(void)
     
     err_code = ble_nus_init(&m_nus, &nus_init);
     APP_ERROR_CHECK(err_code);
+#endif
 
+    
 #if USE_TD1
     ble_td1s_init_t   td1s_init;    
     memset(&td1s_init, 0, sizeof(td1s_init));
@@ -265,6 +473,18 @@ static void services_init(void)
     td1s_init.data_handler = td1s_data_handler;
     
     err_code = ble_td1s_init(&m_td1s, &td1s_init);
+    APP_ERROR_CHECK(err_code);
+#endif
+
+#if USE_TD2
+    ble_td2s_init_t   td2s_init;    
+    memset(&td2s_init, 0, sizeof(td2s_init));
+
+    td2s_init.data_handler = td2s_data_handler;
+    td2s_init.cmd_handler = td2s_cmd_handler;
+    td2s_init.sts_handler = td2s_sts_handler;
+    
+    err_code = ble_td2s_init(&m_td2s, &td2s_init);
     APP_ERROR_CHECK(err_code);
 #endif
 
@@ -339,6 +559,41 @@ static void conn_params_init(void)
     APP_ERROR_CHECK(err_code);
 }
 
+#if USE_DM
+/**@brief Function for handling advertising events.
+ *
+ * @details This function will be called for advertising events which are passed to the application.
+ *
+ * @param[in] ble_adv_evt  Advertising event.
+ */
+static void on_adv_evt(ble_adv_evt_t ble_adv_evt)
+{
+    uint32_t err_code;
+
+    switch (ble_adv_evt)
+    {
+        case BLE_ADV_EVT_FAST:
+            err_code = bsp_indication_set(BSP_INDICATE_ADVERTISING);
+            APP_ERROR_CHECK(err_code);
+            break;
+        case BLE_ADV_EVT_IDLE:
+            err_code = bsp_indication_set(BSP_INDICATE_IDLE);
+            APP_ERROR_CHECK(err_code);
+
+            // enable buttons to wake-up from power off
+            err_code = bsp_buttons_enable( (1 << WAKEUP_BUTTON_ID)
+                                         | (1 << BOND_DELETE_ALL_BUTTON_ID));
+            APP_ERROR_CHECK(err_code);
+
+            // Go to system-off mode. This function will not return; wakeup will cause a reset.
+            err_code = sd_power_system_off();
+            APP_ERROR_CHECK(err_code);
+            break;
+        default:
+            break;
+    }
+}
+#endif
 
 /**@brief Function for starting advertising.
  */
@@ -388,7 +643,7 @@ static void on_ble_evt(ble_evt_t * p_ble_evt)
             m_conn_handle = BLE_CONN_HANDLE_INVALID;
             advertising_start();
             break;
-            
+/* NOT USE_DM - this was the last change which then enabled Windows 8.1 to pair the device
         case BLE_GAP_EVT_SEC_PARAMS_REQUEST:
             s_sec_keyset.keys_periph.p_enc_key = NULL;
             err_code = sd_ble_gap_sec_params_reply(m_conn_handle, 
@@ -421,7 +676,7 @@ static void on_ble_evt(ble_evt_t * p_ble_evt)
                 APP_ERROR_CHECK(err_code);
             }
             break;
-
+NOT USE_DM*/
         case BLE_GAP_EVT_TIMEOUT:
             if (p_ble_evt->evt.gap_evt.params.timeout.src == BLE_GAP_TIMEOUT_SRC_ADVERTISING)
             { 
@@ -453,19 +708,49 @@ static void on_ble_evt(ble_evt_t * p_ble_evt)
  */
 static void ble_evt_dispatch(ble_evt_t * p_ble_evt)
 {
+    
+#if USE_DM
+    dm_ble_evt_handler(p_ble_evt);
+#endif
     ble_conn_params_on_ble_evt(p_ble_evt);
     
+#if USE_NUS
     ble_nus_on_ble_evt(&m_nus, p_ble_evt); // components/ble/ble_services/ble_nus/ble_nus.c(201)
         // case BLE_GAP_EVT_CONNECTED:    on_connect(p_nus, p_ble_evt);
         // case BLE_GAP_EVT_DISCONNECTED: on_disconnect(p_nus, p_ble_evt);
         // case BLE_GATTS_EVT_WRITE:      on_write(p_nus, p_ble_evt);
+#endif
 
 #if USE_TD1
     ble_td1s_on_ble_evt(&m_td1s, p_ble_evt);
 #endif
     
+#if USE_TD2
+    ble_td2s_on_ble_evt(&m_td2s, p_ble_evt);
+#endif
+    
     on_ble_evt(p_ble_evt);
+    
+#if USE_DM
+    ble_advertising_on_ble_evt(p_ble_evt);
+#endif
 }
+
+
+#if USE_DM
+/**@brief Function for dispatching a system event to interested modules.
+ *
+ * @details This function is called from the System event interrupt handler after a system
+ *          event has been received.
+ *
+ * @param[in] sys_evt  System stack event.
+ */
+static void sys_evt_dispatch(uint32_t sys_evt)
+{
+    pstorage_sys_event_handler(sys_evt);
+    ble_advertising_on_sys_evt(sys_evt);
+}
+#endif
 
 
 /**@brief   Function for the S110 SoftDevice initialization.
@@ -489,6 +774,12 @@ static void ble_stack_init(void)
     // Subscribe for BLE events.
     err_code = softdevice_ble_evt_handler_set(ble_evt_dispatch);
     APP_ERROR_CHECK(err_code);
+
+#if USE_DM    
+    // Register with the SoftDevice handler module for BLE events.
+    err_code = softdevice_sys_evt_handler_set(sys_evt_dispatch);
+    APP_ERROR_CHECK(err_code);
+#endif
 }
 
 
@@ -532,6 +823,69 @@ void uart_event_handle_bogus_td1s(uint8_t *pbyte)
 }
 #endif
 
+#if USE_TD2
+void uart_event_handle_bogus_td2s(uint8_t *pbyte)
+{
+    static uint8_t data_array[BLE_TD2S_MAX_DATA_LEN];
+    static uint8_t index = 0;
+    uint32_t err_code;
+
+    data_array[index] = *pbyte;
+    index++;
+    if ((data_array[index - 1] == '\n') || (index >= (BLE_TD2S_MAX_DATA_LEN)))
+    {
+        err_code = ble_td2s_string_send(&m_td2s, data_array, index);
+        if (err_code != NRF_ERROR_INVALID_STATE)
+        {
+            APP_ERROR_CHECK(err_code);
+        }        
+        index = 0;
+    }
+    
+}
+#endif
+#if USE_TD2
+void uart_event_handle_td2(app_uart_evt_t * p_event)
+{
+    static uint8_t data_array[BLE_TD2S_MAX_DATA_LEN];
+    static uint8_t index = 0;
+    uint32_t err_code;
+    
+    switch (p_event->evt_type)
+    {
+    case APP_UART_DATA_READY:            
+
+        UNUSED_VARIABLE(app_uart_get(&data_array[index]));        
+        index++;
+        
+        if ((data_array[index - 1] == '\n') || (index >= (BLE_TD2S_MAX_DATA_LEN)))
+        {
+            err_code = ble_td2s_string_send(&m_td2s, data_array, index);
+            if (err_code != NRF_ERROR_INVALID_STATE)
+            {
+                APP_ERROR_CHECK(err_code);
+            }
+
+            index = 0;
+        }
+        break;
+            
+    case APP_UART_COMMUNICATION_ERROR:
+        APP_ERROR_HANDLER(p_event->data.error_communication);
+        break;
+        
+    case APP_UART_FIFO_ERROR:
+        APP_ERROR_HANDLER(p_event->data.error_code);
+        break;
+        
+    default:
+        break;
+    }
+}
+/**@snippet [Handling the data received over UART] */
+#endif
+
+#if USE_NUS
 void uart_event_handle(app_uart_evt_t * p_event)
 {
     static uint8_t data_array[BLE_NUS_MAX_DATA_LEN];
@@ -545,6 +899,9 @@ void uart_event_handle(app_uart_evt_t * p_event)
         
 #if USE_TD1
             uart_event_handle_bogus_td1s(&data_array[index]);
+#endif
+#if USE_TD2
+            uart_event_handle_bogus_td2s(&data_array[index]);
 #endif
             index++;
 
@@ -573,6 +930,7 @@ void uart_event_handle(app_uart_evt_t * p_event)
             }
 }
 /**@snippet [Handling the data received over UART] */
+#endif
 
 
 /**@brief  Function for initializing the UART module.
@@ -589,9 +947,11 @@ static void uart_init(void)
           CTS_PIN_NUMBER,
           APP_UART_FLOW_CONTROL_ENABLED,
           false,
-          UART_BAUDRATE_BAUDRATE_Baud38400
+          UART_BAUDRATE_BAUDRATE_Baud115200
+          //UART_BAUDRATE_BAUDRATE_Baud38400
       };
 
+#if USE_NUS
     APP_UART_FIFO_INIT( &comm_params,
                         UART_RX_BUF_SIZE,
                         UART_TX_BUF_SIZE,
@@ -599,6 +959,19 @@ static void uart_init(void)
                         APP_IRQ_PRIORITY_LOW,
                         err_code);
     APP_ERROR_CHECK(err_code);
+#endif
+
+#if USE_TD2
+    APP_UART_FIFO_INIT( &comm_params,
+                        UART_RX_BUF_SIZE,
+                        UART_TX_BUF_SIZE,
+                        uart_event_handle_td2, //OK this is the callback for UART interrupts
+                        APP_IRQ_PRIORITY_LOW,
+                        err_code);
+    APP_ERROR_CHECK(err_code);
+#endif
+
+      
 }
 /**@snippet [UART Initialization] */
 
@@ -621,6 +994,9 @@ int main(void)
     APP_ERROR_CHECK(err_code);
     err_code = bsp_buttons_enable(1 << WAKEUP_BUTTON_ID);
     APP_ERROR_CHECK(err_code);
+#if USE_DM    
+    device_manager_init();
+#endif
     gap_params_init(); //OK
     services_init(); //OK
     advertising_init(); //OK -> either OR ish

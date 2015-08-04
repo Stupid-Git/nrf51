@@ -4,9 +4,36 @@
 <h1>µVision Build Log</h1>
 <h2>Project:</h2>
 C:\ble_nrf51\tandd\nrf51\examples\ble_peripheral\ble_app_K1\pca10028\s110\arm4\ble_app_K1_s110_pca10028.uvproj
-Project File Date:  05/28/2015
+Project File Date:  07/21/2015
 
 <h2>Output:</h2>
-</pre>
-</body>
-</html>
+Build Project 'ble_app_K1_s110_pca10028' - Target 'nrf51422_xxac_s110'
+compiling main_app_uart.c...
+C:\ble_nrf51\tandd\nrf51\examples\ble_peripheral\ble_app_K1\main_app_uart.c(383): warning:  #1295-D: Deprecated declaration blk_dn_chk - give arg types
+  int32_t blk_dn_chk();
+C:\ble_nrf51\tandd\nrf51\examples\ble_peripheral\ble_app_K1\main_app_uart.c(629): warning:  #177-D: variable "s_sec_keyset" was declared but never referenced
+      static ble_gap_sec_keyset_t      s_sec_keyset;
+C:\ble_nrf51\tandd\nrf51\examples\ble_peripheral\ble_app_K1\main_app_uart.c(630): warning:  #177-D: variable "p_enc_info" was declared but never referenced
+      ble_gap_enc_info_t *             p_enc_info;
+C:\ble_nrf51\tandd\nrf51\examples\ble_peripheral\ble_app_K1\main_app_uart.c(126): warning:  #550-D: variable "m_sec_params" was set but never used
+  static ble_gap_sec_params_t             m_sec_params;                               /**< Security requirements for this application. */
+..\..\..\main_app_uart.c: 4 warnings, 0 errors
+linking...
+Program Size: Code=16424 RO-data=356 RW-data=252 ZI-data=6404  
+FromELF: creating hex file...
+".\_build\nrf51422_xxac_s110.axf" - 0 Error(s), 4 Warning(s).
+ Error(s), 2 Warning(s).
+Target not created
+422_xxac_s110.axf: Error: L6218E: Undefined symbol ble_advertising_on_sys_evt (referred from main_app_uart.o).
+Not enough information to list image symbols.
+Finished: 1 information, 0 warning and 1 error messages.
+".\_build\nrf51422_xxac_s110.axf" - 1 Error(s), 3 Warning(s).
+Target not created
+e_load (referred from device_manager_peripheral.o).
+.\_build\nrf51422_xxac_s110.axf: Error: L6218E: Undefined symbol pstorage_register (referred from device_manager_peripheral.o).
+.\_build\nrf51422_xxac_s110.axf: Error: L6218E: Undefined symbol pstorage_store (referred from device_manager_peripheral.o).
+.\_build\nrf51422_xxac_s110.axf: Error: L6218E: Undefined symbol pstorage_update (referred from device_manager_peripheral.o).
+Not enough information to list image symbols.
+Finished: 1 information, 0 warning and 6 error messages.
+".\_build\nrf51422_xxac_s110.axf" - 6 Error(s), 3 Warning(s).
+Target not created

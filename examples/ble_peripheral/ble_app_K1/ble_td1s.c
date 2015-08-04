@@ -66,6 +66,7 @@ static void on_write(ble_td1s_t * p_td1s, ble_evt_t * p_ble_evt)
              (p_td1s->data_handler != NULL)
             )
     {
+        //ref td1s_data_handler(...)
         p_td1s->data_handler(p_td1s, p_evt_write->data, p_evt_write->len);
     }
     else
